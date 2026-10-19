@@ -1,0 +1,12 @@
+[package]
+name = "daw-als"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Reader for Ableton Live Set (.als) files into the daw-model project model"
+
+[dependencies]
+daw-model.workspace = true
+flate2 = "1"
+roxmltree = "0.20"
+thiserror = "2"
