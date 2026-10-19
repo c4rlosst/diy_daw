@@ -5,6 +5,7 @@ use std::path::Path;
 
 use daw_engine::engine::Engine;
 use daw_engine::{SampleResolver, Song, Source};
+use daw_model::WarpMode;
 
 fn library() -> Option<String> {
     let dir = std::env::var("LIVE_LIBRARY")
@@ -51,33 +52,31 @@ fn demo_song_vocals_load_and_play() {
     );
 }
 
-/// At the song's own tempo a warped clip should play its source file back unchanged,
-/// starting where the warp markers and loop start say. Checked against the raw file.
-#[test]
-fn rendered_vocal_matches_the_source_file() {
-    let Some(lib) = library() else {
-        eprintln!("no Live library found; skipping");
-        return;
-    };
+/// Renders the demo's "Vocal Main" clip at beat 323 on its own and compares it with the raw
+/// file. The clip has loop start 3 beats and markers (31.6168 s = beat 0) and (31.6280 s =
+/// beat 1/32), i.e. 167 bpm, the song's tempo, so it should play back its source unchanged,
+/// starting where the warp markers and loop start say. Returns (correlation, fitted gain,
+/// track gain).
+fn vocal_vs_source(mode: WarpMode) -> Option<(f64, f64, f32)> {
+    let lib = library()?;
     let set =
         Path::new(&lib).join("Lessons/Demo Songs/Chuck Sutton - Patience (Live 12 Suite Demo).als");
     let project = daw_als::read_file(&set).unwrap();
     let mut song = Song::from_project(&project, Source::Arrangement);
     song.load_samples(&SampleResolver::new().with_root(&lib));
 
-    // The "Vocal Main" clip at beat 323: loop start 3 beats, markers (31.6168 s = beat 0) and
-    // (31.6280 s = beat 1/32), i.e. 167 bpm, the song's tempo.
     let track = song
         .track_names
         .iter()
         .position(|n| n == "Vocal Main")
         .unwrap();
-    let region = song.regions[track]
-        .iter()
-        .find(|r| r.start == 323.0)
-        .unwrap()
-        .clone();
     let gain = song.track_gains[track];
+    let region = song.regions[track]
+        .iter_mut()
+        .find(|r| r.start == 323.0)
+        .unwrap();
+    region.warp_mode = mode;
+    let region = region.clone();
     let source = region.sample.clone().unwrap();
     let seconds_per_beat = 0.011_227_544_910_179_64 / 0.03125;
     let first_second = 31.616_766_467_065_87 + 3.0 * seconds_per_beat;
@@ -110,11 +109,35 @@ fn rendered_vocal_matches_the_source_file() {
         dot_oo += o * o;
     }
     assert!(dot_ss > 1e-3, "source slice is silent; wrong position?");
-    let correlation = dot_os / (dot_ss * dot_oo).sqrt();
-    let fitted_gain = dot_os / dot_ss;
+    Some((dot_os / (dot_ss * dot_oo).sqrt(), dot_os / dot_ss, gain))
+}
+
+/// Re-Pitch mode reads the file by position, so at native tempo it must reproduce it exactly.
+#[test]
+fn resampled_vocal_matches_the_source_file() {
+    let Some((correlation, fitted_gain, gain)) = vocal_vs_source(WarpMode::RePitch) else {
+        eprintln!("no Live library found; skipping");
+        return;
+    };
     assert!(correlation > 0.999, "correlation {correlation}");
     assert!(
         (fitted_gain - f64::from(gain)).abs() < 0.01,
+        "gain {fitted_gain} vs track {gain}"
+    );
+}
+
+/// The time-stretcher is not bit-exact, but at native tempo on real singing it should still
+/// follow the file closely. A timing error of even a millisecond would pull this well down.
+#[cfg(feature = "stretch")]
+#[test]
+fn stretched_vocal_follows_the_source_file() {
+    let Some((correlation, fitted_gain, gain)) = vocal_vs_source(WarpMode::Complex) else {
+        eprintln!("no Live library found; skipping");
+        return;
+    };
+    assert!(correlation > 0.99, "correlation {correlation}");
+    assert!(
+        (fitted_gain - f64::from(gain)).abs() < 0.05,
         "gain {fitted_gain} vs track {gain}"
     );
 }

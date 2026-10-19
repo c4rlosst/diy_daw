@@ -88,13 +88,38 @@ impl AudioRegion {
         }
     }
 
-    /// Stereo audio at timeline position `t`, before gain.
+    /// Position in the source file in frames (fractional) at timeline position `t`.
+    /// Zero if the sample has not been loaded.
+    pub fn source_frames(&self, t: f64, tempo: f64) -> f64 {
+        match &self.sample {
+            Some(s) => self.source_seconds(t, tempo) * f64::from(s.sample_rate()),
+            None => 0.0,
+        }
+    }
+
+    /// Stereo audio at timeline position `t` by resampling (speed and pitch change together),
+    /// before gain.
     pub fn frame_at(&self, t: f64, tempo: f64) -> [f32; 2] {
         match &self.sample {
             Some(s) => s.frame(self.source_seconds(t, tempo) * f64::from(s.sample_rate())),
             None => [0.0, 0.0],
         }
     }
+
+    /// Whether this region is time-stretched (pitch preserved) instead of resampled: it must be
+    /// warped, not in Re-Pitch mode, loaded, and the `stretch` feature must be enabled.
+    pub fn uses_stretch(&self) -> bool {
+        crate::stretch::AVAILABLE
+            && self.warped
+            && self.sample.is_some()
+            && !matches!(self.warp_mode, WarpMode::RePitch)
+    }
+}
+
+/// Index of the region sounding at timeline position `t`, for regions sorted by start.
+pub fn region_at(regions: &[AudioRegion], t: f64) -> Option<usize> {
+    let after = regions.partition_point(|r| r.start <= t);
+    (after > 0 && regions[after - 1].end > t).then_some(after - 1)
 }
 
 #[cfg(test)]

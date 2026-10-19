@@ -1,0 +1,4 @@
+[env]
+# ssstretch decides whether to define its own std::make_unique from __cplusplus, which MSVC
+# reports as C++98 unless this flag is given; without it the build fails with an ambiguous call.
+CXXFLAGS_x86_64_pc_windows_msvc = "/Zc:__cplusplus"

@@ -5,9 +5,16 @@ edition.workspace = true
 license.workspace = true
 description = "Realtime audio engine for diy_daw: transport, sequencer and a simple synth"
 
+[features]
+default = ["stretch"]
+# Pitch-preserving time-stretch via Signalsmith Stretch (C++, built with the cc toolchain).
+# Without it, warped audio is played by resampling only.
+stretch = ["dep:ssstretch"]
+
 [dependencies]
 cpal = "0.18.2"
 daw-model.workspace = true
+ssstretch = { version = "0.1.0", optional = true }
 symphonia = { version = "0.6.1", default-features = false, features = ["wav", "aiff", "ogg", "vorbis", "pcm", "flac", "mp3"] }
 thiserror = "2"
 

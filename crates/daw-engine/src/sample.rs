@@ -104,6 +104,16 @@ impl Sample {
         }
     }
 
+    /// Stereo frame at a whole frame index, with silence outside the sample.
+    /// Mono is duplicated to both sides.
+    pub fn stereo_at(&self, frame: i64) -> [f32; 2] {
+        let Ok(frame) = isize::try_from(frame) else {
+            return [0.0, 0.0];
+        };
+        let right = usize::from(self.channels > 1);
+        [self.at(frame, 0), self.at(frame, right)]
+    }
+
     /// Decodes an audio file (WAV, AIFF, Ogg Vorbis, FLAC, MP3).
     pub fn decode_file(path: &Path) -> Result<Sample, SampleError> {
         let mss = MediaSourceStream::new(Box::new(File::open(path)?), Default::default());

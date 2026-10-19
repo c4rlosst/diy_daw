@@ -7,6 +7,7 @@ pub mod engine;
 pub mod region;
 pub mod sample;
 pub mod song;
+pub mod stretch;
 pub mod synth;
 pub mod wav;
 

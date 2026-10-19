@@ -5,16 +5,20 @@
 //! [`Command`]s over a channel that the engine drains at the start of each block.
 //!
 //! Audio clips are played by position: for every output frame the engine maps the
-//! timeline position to a position in the source file and reads it with interpolation.
-//! The speed of playback therefore follows the tempo and warp markers (pitch follows
-//! speed, like Live's Re-Pitch mode), and seeks, loops and tempo changes stay in sync.
+//! timeline position to a position in the source file (through the clip's loop settings and
+//! warp markers). Warped clips are time-stretched so pitch is preserved
+//! ([`crate::stretch`]); clips in Re-Pitch mode, unwarped clips, and builds without the
+//! `stretch` feature read the file with interpolation, so pitch follows speed.
+//! Seeks, loops and tempo changes stay in sync either way.
 
+use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
 use crate::region::AudioRegion;
 use crate::song::{Event, EventKind, Song};
+use crate::stretch::{Feed, StretchVoice};
 use crate::synth::{Synth, Waveform};
 
 pub const MIN_TEMPO: f64 = 20.0;
@@ -35,7 +39,20 @@ pub enum Command {
     SetLooping(bool),
     SetWaveform(Waveform),
     /// Replaces the song and adopts its tempo. Playback state is kept.
-    LoadSong(Box<Song>),
+    LoadSong(Box<LoadedSong>),
+}
+
+/// A song together with the per-track playback state built for it. Created by
+/// [`EngineHandle::load_song`] on the caller's thread, so the audio thread only swaps it in.
+pub struct LoadedSong {
+    song: Song,
+    tracks: Vec<TrackState>,
+}
+
+impl std::fmt::Debug for LoadedSong {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LoadedSong({} tracks)", self.tracks.len())
+    }
 }
 
 #[derive(Default)]
@@ -49,6 +66,7 @@ struct Shared {
 pub struct EngineHandle {
     tx: Sender<Command>,
     shared: Arc<Shared>,
+    sample_rate: u32,
 }
 
 impl EngineHandle {
@@ -75,8 +93,19 @@ impl EngineHandle {
     pub fn set_waveform(&self, waveform: Waveform) {
         self.send(Command::SetWaveform(waveform));
     }
-    pub fn load_song(&self, song: Song) {
-        self.send(Command::LoadSong(Box::new(song)));
+
+    /// Loads a song. The per-track state (including time-stretchers) is built here, not on
+    /// the audio thread.
+    pub fn load_song(&self, mut song: Song) {
+        let tracks = song.track_names.len();
+        song.regions.resize_with(tracks, Vec::new);
+        song.track_gains.resize(tracks, 1.0);
+        let tracks = song
+            .regions
+            .iter()
+            .map(|regions| TrackState::new(self.sample_rate, regions))
+            .collect();
+        self.send(Command::LoadSong(Box::new(LoadedSong { song, tracks })));
     }
 
     /// Playhead position in beats, as of the last audio block.
@@ -100,6 +129,8 @@ enum Transport {
 
 struct TrackState {
     synth: Synth,
+    /// Present only for tracks with regions that are time-stretched.
+    stretch: Option<StretchVoice>,
     /// Index of the first region that has not ended yet (regions are sorted by start).
     cursor: usize,
     /// Region currently (or most recently) sounding, kept while its fade-out runs.
@@ -108,11 +139,13 @@ struct TrackState {
 }
 
 impl TrackState {
-    fn new(sample_rate: f32, waveform: Waveform) -> TrackState {
-        let mut synth = Synth::new(sample_rate);
-        synth.waveform = waveform;
+    fn new(sample_rate: u32, regions: &[AudioRegion]) -> TrackState {
         TrackState {
-            synth,
+            synth: Synth::new(sample_rate as f32),
+            stretch: regions
+                .iter()
+                .any(AudioRegion::uses_stretch)
+                .then(|| StretchVoice::new(sample_rate)),
             cursor: 0,
             region: None,
             envelope: 0.0,
@@ -126,14 +159,8 @@ impl TrackState {
     }
 
     /// Next stereo frame of this track's audio at timeline position `t`.
-    fn audio_frame(
-        &mut self,
-        regions: &[AudioRegion],
-        t: f64,
-        tempo: f64,
-        playing: bool,
-        fade_step: f32,
-    ) -> [f32; 2] {
+    fn audio_frame(&mut self, feed: &Feed, t: f64, playing: bool, fade_step: f32) -> [f32; 2] {
+        let regions = feed.regions;
         if regions.is_empty() {
             return [0.0, 0.0];
         }
@@ -161,7 +188,10 @@ impl TrackState {
         let Some(region) = self.region.and_then(|i| regions.get(i)) else {
             return [0.0, 0.0];
         };
-        let [l, r] = region.frame_at(t, tempo);
+        let [l, r] = match &mut self.stretch {
+            Some(voice) if region.uses_stretch() => voice.next_frame(feed, t),
+            _ => region.frame_at(t, feed.tempo),
+        };
         let gain = self.envelope * region.gain;
         [l * gain, r * gain]
     }
@@ -171,6 +201,8 @@ pub struct Engine {
     sample_rate: f32,
     rx: Receiver<Command>,
     shared: Arc<Shared>,
+    /// Replaced songs are sent here to be freed off the audio thread.
+    retire: Sender<Box<dyn Any + Send>>,
     song: Song,
     tracks: Vec<TrackState>,
     waveform: Waveform,
@@ -187,10 +219,18 @@ impl Engine {
     pub fn new(sample_rate: u32) -> (Engine, EngineHandle) {
         let (tx, rx) = channel();
         let shared = Arc::new(Shared::default());
+
+        let (retire, retired) = channel::<Box<dyn Any + Send>>();
+        // If the thread cannot start, replaced songs are simply freed where they are dropped.
+        let _ = std::thread::Builder::new()
+            .name("daw-engine-gc".into())
+            .spawn(move || while retired.recv().is_ok() {});
+
         let engine = Engine {
             sample_rate: sample_rate as f32,
             rx,
             shared: shared.clone(),
+            retire,
             song: Song::default(),
             tracks: Vec::new(),
             waveform: Waveform::default(),
@@ -201,7 +241,14 @@ impl Engine {
             tail_beats: 0.0,
             next_event: 0,
         };
-        (engine, EngineHandle { tx, shared })
+        (
+            engine,
+            EngineHandle {
+                tx,
+                shared,
+                sample_rate,
+            },
+        )
     }
 
     /// Fills `out` (interleaved, `channels` per frame) with the next block of audio.
@@ -211,6 +258,7 @@ impl Engine {
         let channels = channels.max(1);
         let beats_per_frame = self.tempo / 60.0 / f64::from(self.sample_rate);
         let fade_step = 1.0 / (AUDIO_FADE_SECONDS * self.sample_rate);
+        let wrap = (self.looping && self.song.length_beats > 0.0).then_some(self.song.length_beats);
 
         for frame in out.chunks_exact_mut(channels) {
             let playing = self.transport == Transport::Playing;
@@ -227,7 +275,13 @@ impl Engine {
                 .zip(&self.song.regions)
             {
                 let synth = track.synth.next_sample();
-                let [al, ar] = track.audio_frame(regions, t, self.tempo, playing, fade_step);
+                let feed = Feed {
+                    regions,
+                    tempo: self.tempo,
+                    beats_per_frame,
+                    wrap,
+                };
+                let [al, ar] = track.audio_frame(&feed, t, playing, fade_step);
                 left += (synth + al) * gain;
                 right += (synth + ar) * gain;
             }
@@ -312,21 +366,22 @@ impl Engine {
                         track.synth.waveform = waveform;
                     }
                 }
-                Command::LoadSong(song) => self.load_song(*song),
+                Command::LoadSong(loaded) => self.load_song(*loaded),
             }
         }
     }
 
-    fn load_song(&mut self, song: Song) {
-        self.tracks = song
-            .track_names
-            .iter()
-            .map(|_| TrackState::new(self.sample_rate, self.waveform))
-            .collect();
+    fn load_song(&mut self, loaded: LoadedSong) {
+        let LoadedSong { song, mut tracks } = loaded;
+        for track in &mut tracks {
+            track.synth.waveform = self.waveform;
+        }
         if song.tempo > 0.0 {
             self.tempo = song.tempo.clamp(MIN_TEMPO, MAX_TEMPO);
         }
-        self.song = song;
+        let old_song = std::mem::replace(&mut self.song, song);
+        let old_tracks = std::mem::replace(&mut self.tracks, tracks);
+        let _ = self.retire.send(Box::new((old_song, old_tracks)));
         self.seek(self.position);
     }
 

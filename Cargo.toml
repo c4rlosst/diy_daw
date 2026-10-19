@@ -9,3 +9,7 @@ license = "MIT"
 
 [workspace.dependencies]
 daw-model = { path = "crates/daw-model" }
+
+# The C++ time-stretcher is far too slow unoptimised; keep it fast in debug builds too.
+[profile.dev.package.ssstretch]
+opt-level = 3
