@@ -6,7 +6,9 @@
 use std::io::Read;
 use std::path::Path;
 
-use daw_model::{Clip, ClipContent, Note, Project, Track, TrackKind, WarpMarker};
+use daw_model::{
+    Clip, ClipContent, ClipLoop, Note, Project, SampleRef, Track, TrackKind, WarpMarker, WarpMode,
+};
 use flate2::read::GzDecoder;
 use roxmltree::{Document, Node};
 
@@ -147,10 +149,26 @@ fn read_clip(c: Node) -> Option<Clip> {
             notes: read_notes(c),
         },
         "AudioClip" => ClipContent::Audio {
-            sample_path: child_path(c, &["SampleRef", "FileRef", "RelativePath"])
-                .and_then(|n| n.attribute("Value"))
-                .unwrap_or("")
-                .to_string(),
+            sample: SampleRef {
+                path: attr_path(c, &["SampleRef", "FileRef", "RelativePath"]),
+                pack: attr_path(c, &["SampleRef", "FileRef", "LivePackName"]),
+            },
+            sample_rate: child_path(c, &["SampleRef", "DefaultSampleRate"])
+                .and_then(value_f64)
+                .unwrap_or(0.0) as u32,
+            sample_frames: child_path(c, &["SampleRef", "DefaultDuration"])
+                .and_then(value_f64)
+                .unwrap_or(0.0) as u64,
+            warp_mode: WarpMode::from_id(
+                child(c, "WarpMode")
+                    .and_then(value_f64)
+                    .map_or(0, |v| v as i32),
+            ),
+            gain: child(c, "SampleVolume")
+                .and_then(value_f64)
+                .map_or(1.0, |v| v as f32),
+            pitch_semitones: child(c, "PitchCoarse").and_then(value_f64).unwrap_or(0.0)
+                + child(c, "PitchFine").and_then(value_f64).unwrap_or(0.0) / 100.0,
             warped: child(c, "IsWarped").and_then(|n| n.attribute("Value")) == Some("true"),
             warp_markers: child(c, "WarpMarkers")
                 .map(|w| {
@@ -175,8 +193,29 @@ fn read_clip(c: Node) -> Option<Clip> {
             .to_string(),
         start: child(c, "CurrentStart").and_then(value_f64).unwrap_or(0.0),
         end: child(c, "CurrentEnd").and_then(value_f64).unwrap_or(0.0),
+        looping: read_loop(c),
         content,
     })
+}
+
+fn read_loop(clip: Node) -> ClipLoop {
+    let Some(l) = child(clip, "Loop") else {
+        return ClipLoop::default();
+    };
+    let f = |name: &str| child(l, name).and_then(value_f64).unwrap_or(0.0);
+    ClipLoop {
+        start: f("LoopStart"),
+        end: f("LoopEnd"),
+        start_relative: f("StartRelative"),
+        enabled: child(l, "LoopOn").and_then(|n| n.attribute("Value")) == Some("true"),
+    }
+}
+
+fn attr_path(n: Node, path: &[&str]) -> String {
+    child_path(n, path)
+        .and_then(|n| n.attribute("Value"))
+        .unwrap_or("")
+        .to_string()
 }
 
 fn read_notes(clip: Node) -> Vec<Note> {

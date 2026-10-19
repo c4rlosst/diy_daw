@@ -55,3 +55,24 @@ Companion to [als-format.md](als-format.md). Source: factory content in the Live
 
 ## Still not examined
 `.agr` groove binary layout, `PerNoteEvent` encoding details, the native engine (`Ableton Live Engine.dll`), and the device DLLs in `Resources\Devices\Pc`.
+
+## Audio clip loop and warp semantics (worked out from the Patience demo set)
+
+Clip fields: `CurrentStart`/`CurrentEnd` (timeline extent for arrangement clips; `0..length` for session clips) and `Loop{LoopStart, LoopEnd, StartRelative, LoopOn}`.
+
+- **Units.** For warped clips (`IsWarped=true`) the loop fields are in *sample beats*, which the warp markers map to seconds in the file.
+  For unwarped clips they are *seconds* of source audio (e.g. `LoopEnd=44.55` for a 44.55 s file) and the clip plays at native speed;
+  its timeline length in beats was simply derived from the tempo it was saved at.
+- **Warp map.** Piecewise linear through the markers `(SecTime, BeatTime)`; beyond the first/last marker the slope of the end segment continues.
+  Beat 0 is *not* necessarily the file start: one clip has marker `(31.6168 s, beat 0)`. Seconds per beat = `60/tempo` (0.35928 = 167 bpm there).
+- **Negative positions** are silence before the file starts (`LoopStart=-8` means 8 beats of silence, then the audio).
+- **Where playback starts:** `LoopStart + StartRelative`.
+- **Loop off:** plays `CurrentEnd - CurrentStart` beats from there (`CurrentEnd-CurrentStart == LoopEnd-start` held in every clip checked).
+- **Loop on:** first pass runs from the start marker to `LoopEnd` (length `LoopEnd - (LoopStart+StartRelative)`, which matched `CurrentEnd-CurrentStart`
+  in both session clips with `LoopOn=true`), then it repeats `LoopStart..LoopEnd`.
+- `OutMarker` was ignored; its meaning is unknown.
+
+Verified by rendering the arrangement clip "Vocal Main" at beat 323 (loop start 3, marker `(31.6168 s, beat 0)`) through the engine and comparing it
+with the raw WAV: correlation > 0.999 at the position these rules predict. The loop-on rules are consistent with the data but untested by ear.
+
+Not verified: warp mode ids other than 4, `PitchCoarse`/`PitchFine`/`SampleVolume` units, whether arrangement clips with loop on follow the same rule.

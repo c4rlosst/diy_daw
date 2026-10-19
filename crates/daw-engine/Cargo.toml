@@ -8,6 +8,7 @@ description = "Realtime audio engine for diy_daw: transport, sequencer and a sim
 [dependencies]
 cpal = "0.18.2"
 daw-model.workspace = true
+symphonia = { version = "0.6.1", default-features = false, features = ["wav", "aiff", "ogg", "vorbis", "pcm", "flac", "mp3"] }
 thiserror = "2"
 
 [dev-dependencies]

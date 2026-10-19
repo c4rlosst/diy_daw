@@ -68,3 +68,58 @@ fn minimal_set_parses() {
         _ => panic!("expected midi"),
     }
 }
+
+#[test]
+fn audio_clip_fields_parse() {
+    let xml = r#"<Ableton><LiveSet><Tracks><AudioTrack Id="1"><DeviceChain><MainSequencer>
+      <ClipSlotList><ClipSlot Id="0"><ClipSlot><Value>
+        <AudioClip Id="5" Time="0">
+          <CurrentStart Value="0"/><CurrentEnd Value="36"/><Name Value="Vox"/>
+          <Loop><LoopStart Value="-4"/><LoopEnd Value="28"/><StartRelative Value="-4"/><LoopOn Value="true"/></Loop>
+          <IsWarped Value="true"/><WarpMode Value="4"/><PitchCoarse Value="-2"/><PitchFine Value="50"/>
+          <SampleVolume Value="0.5"/>
+          <WarpMarkers>
+            <WarpMarker Id="1" SecTime="0" BeatTime="0"/>
+            <WarpMarker Id="2" SecTime="0.5" BeatTime="1"/>
+          </WarpMarkers>
+          <SampleRef>
+            <FileRef><RelativePath Value="Samples/vox.wav"/><LivePackName Value="Core Library"/></FileRef>
+            <DefaultDuration Value="2138444"/><DefaultSampleRate Value="48000"/>
+          </SampleRef>
+        </AudioClip></Value></ClipSlot></ClipSlot></ClipSlotList>
+    </MainSequencer></DeviceChain></AudioTrack></Tracks></LiveSet></Ableton>"#;
+    let p = daw_als::read_xml(xml).unwrap();
+    let clip = p.tracks[0].session_clips[0].as_ref().unwrap();
+    assert_eq!(
+        clip.looping,
+        daw_model::ClipLoop {
+            start: -4.0,
+            end: 28.0,
+            start_relative: -4.0,
+            enabled: true
+        }
+    );
+    match &clip.content {
+        daw_model::ClipContent::Audio {
+            sample,
+            sample_rate,
+            sample_frames,
+            warped,
+            warp_markers,
+            warp_mode,
+            gain,
+            pitch_semitones,
+        } => {
+            assert_eq!(sample.path, "Samples/vox.wav");
+            assert_eq!(sample.pack, "Core Library");
+            assert_eq!((*sample_rate, *sample_frames), (48_000, 2_138_444));
+            assert!(*warped);
+            assert_eq!(*warp_mode, daw_model::WarpMode::Complex);
+            assert_eq!(*gain, 0.5);
+            assert_eq!(*pitch_semitones, -1.5);
+            assert_eq!(warp_markers.len(), 2);
+            assert_eq!(warp_markers[1].sec_time, 0.5);
+        }
+        _ => panic!("expected audio"),
+    }
+}

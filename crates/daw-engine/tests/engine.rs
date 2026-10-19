@@ -1,7 +1,7 @@
 use daw_engine::engine::Engine;
 use daw_engine::song::{EventKind, Song, Source};
 use daw_engine::synth::Waveform;
-use daw_model::{Clip, ClipContent, Note, Project, Track, TrackKind};
+use daw_model::{Clip, ClipContent, ClipLoop, Note, Project, Track, TrackKind};
 
 const SR: u32 = 48_000;
 
@@ -19,6 +19,7 @@ fn clip(len: f64, notes: Vec<Note>) -> Clip {
         name: String::new(),
         start: 0.0,
         end: len,
+        looping: ClipLoop::default(),
         content: ClipContent::Midi { notes },
     }
 }
