@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/daw-model", "crates/daw-als"]
+members = ["crates/daw-model", "crates/daw-als", "crates/daw-engine"]
 
 [workspace.package]
 version = "0.1.0"

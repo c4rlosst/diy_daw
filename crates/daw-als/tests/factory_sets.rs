@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 
 fn find_als(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -27,7 +29,12 @@ fn all_factory_sets_load() {
     }
     for f in &files {
         let p = daw_als::read_file(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-        assert!(p.tempo >= 20.0 && p.tempo <= 999.0, "{}: tempo {}", f.display(), p.tempo);
+        assert!(
+            p.tempo >= 20.0 && p.tempo <= 999.0,
+            "{}: tempo {}",
+            f.display(),
+            p.tempo
+        );
     }
     eprintln!("loaded {} sets", files.len());
 }

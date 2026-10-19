@@ -38,16 +38,28 @@ pub fn read_xml(xml: &str) -> Result<Project, Error> {
     let doc = Document::parse(xml)?;
     let root = doc.root_element();
     if root.tag_name().name() != "Ableton" {
-        return Err(Error::Format(format!("root element is <{}>", root.tag_name().name())));
+        return Err(Error::Format(format!(
+            "root element is <{}>",
+            root.tag_name().name()
+        )));
     }
-    let live_set = child(root, "LiveSet").ok_or_else(|| Error::Format("missing <LiveSet>".into()))?;
+    let live_set =
+        child(root, "LiveSet").ok_or_else(|| Error::Format("missing <LiveSet>".into()))?;
 
-    let tempo = child_path(live_set, &["MainTrack", "DeviceChain", "Mixer", "Tempo", "Manual"])
-        .and_then(value_f64)
-        .unwrap_or(120.0);
-    let scene_count = child(live_set, "Scenes").map_or(0, |s| s.children().filter(Node::is_element).count());
+    let tempo = child_path(
+        live_set,
+        &["MainTrack", "DeviceChain", "Mixer", "Tempo", "Manual"],
+    )
+    .and_then(value_f64)
+    .unwrap_or(120.0);
+    let scene_count =
+        child(live_set, "Scenes").map_or(0, |s| s.children().filter(Node::is_element).count());
 
-    let mut project = Project { tempo, scene_count, ..Project::default() };
+    let mut project = Project {
+        tempo,
+        scene_count,
+        ..Project::default()
+    };
     if let Some(tracks) = child(live_set, "Tracks") {
         for t in tracks.children().filter(Node::is_element) {
             let kind = match t.tag_name().name() {
@@ -72,7 +84,12 @@ fn read_track(t: Node, kind: TrackKind, scene_count: usize) -> Track {
     let chain = child(t, "DeviceChain");
     let devices = chain
         .and_then(|c| child_path(c, &["DeviceChain", "Devices"]))
-        .map(|d| d.children().filter(Node::is_element).map(|n| n.tag_name().name().to_string()).collect())
+        .map(|d| {
+            d.children()
+                .filter(Node::is_element)
+                .map(|n| n.tag_name().name().to_string())
+                .collect()
+        })
         .unwrap_or_default();
     let sequencer = chain.and_then(|c| child(c, "MainSequencer"));
 
@@ -94,14 +111,25 @@ fn read_track(t: Node, kind: TrackKind, scene_count: usize) -> Track {
     }
 
     let arrangement_clips = sequencer
-        .and_then(|s| s.descendants().find(|n| n.has_tag_name("ArrangerAutomation")))
+        .and_then(|s| {
+            s.descendants()
+                .find(|n| n.has_tag_name("ArrangerAutomation"))
+        })
         .and_then(|a| child(a, "Events"))
-        .map(|e| e.children().filter(Node::is_element).filter_map(read_clip).collect())
+        .map(|e| {
+            e.children()
+                .filter(Node::is_element)
+                .filter_map(read_clip)
+                .collect()
+        })
         .unwrap_or_default();
 
     Track {
         id: t.attribute("Id").and_then(|v| v.parse().ok()).unwrap_or(-1),
-        name: child_path(t, &["Name", "EffectiveName"]).and_then(|n| n.attribute("Value")).unwrap_or("").to_string(),
+        name: child_path(t, &["Name", "EffectiveName"])
+            .and_then(|n| n.attribute("Value"))
+            .unwrap_or("")
+            .to_string(),
         kind,
         volume: chain
             .and_then(|c| child_path(c, &["Mixer", "Volume", "Manual"]))
@@ -115,7 +143,9 @@ fn read_track(t: Node, kind: TrackKind, scene_count: usize) -> Track {
 
 fn read_clip(c: Node) -> Option<Clip> {
     let content = match c.tag_name().name() {
-        "MidiClip" => ClipContent::Midi { notes: read_notes(c) },
+        "MidiClip" => ClipContent::Midi {
+            notes: read_notes(c),
+        },
         "AudioClip" => ClipContent::Audio {
             sample_path: child_path(c, &["SampleRef", "FileRef", "RelativePath"])
                 .and_then(|n| n.attribute("Value"))
@@ -139,7 +169,10 @@ fn read_clip(c: Node) -> Option<Clip> {
         _ => return None,
     };
     Some(Clip {
-        name: child(c, "Name").and_then(|n| n.attribute("Value")).unwrap_or("").to_string(),
+        name: child(c, "Name")
+            .and_then(|n| n.attribute("Value"))
+            .unwrap_or("")
+            .to_string(),
         start: child(c, "CurrentStart").and_then(value_f64).unwrap_or(0.0),
         end: child(c, "CurrentEnd").and_then(value_f64).unwrap_or(0.0),
         content,
@@ -152,14 +185,29 @@ fn read_notes(clip: Node) -> Vec<Note> {
         return notes;
     };
     for kt in key_tracks.children().filter(|n| n.has_tag_name("KeyTrack")) {
-        let Some(key) = child(kt, "MidiKey").and_then(|n| n.attribute("Value")).and_then(|v| v.parse::<u8>().ok()) else {
+        let Some(key) = child(kt, "MidiKey")
+            .and_then(|n| n.attribute("Value"))
+            .and_then(|v| v.parse::<u8>().ok())
+        else {
             continue;
         };
-        let Some(events) = child(kt, "Notes") else { continue };
-        for e in events.children().filter(|n| n.has_tag_name("MidiNoteEvent")) {
+        let Some(events) = child(kt, "Notes") else {
+            continue;
+        };
+        for e in events
+            .children()
+            .filter(|n| n.has_tag_name("MidiNoteEvent"))
+        {
             let f = |name: &str| e.attribute(name).and_then(|v| v.parse::<f64>().ok());
-            if let (Some(time), Some(duration), Some(velocity)) = (f("Time"), f("Duration"), f("Velocity")) {
-                notes.push(Note { key, time, duration, velocity: velocity as f32 });
+            if let (Some(time), Some(duration), Some(velocity)) =
+                (f("Time"), f("Duration"), f("Velocity"))
+            {
+                notes.push(Note {
+                    key,
+                    time,
+                    duration,
+                    velocity: velocity as f32,
+                });
             }
         }
     }

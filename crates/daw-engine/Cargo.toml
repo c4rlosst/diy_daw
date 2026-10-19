@@ -1,0 +1,14 @@
+[package]
+name = "daw-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Realtime audio engine for diy_daw: transport, sequencer and a simple synth"
+
+[dependencies]
+cpal = "0.18.2"
+daw-model.workspace = true
+thiserror = "2"
+
+[dev-dependencies]
+daw-als = { path = "../daw-als" }

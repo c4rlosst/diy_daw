@@ -5,7 +5,10 @@ use daw_model::ClipContent;
 fn main() {
     let path = std::env::args().nth(1).expect("usage: dump <file.als>");
     let project = daw_als::read_file(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    println!("tempo {} bpm, {} scenes", project.tempo, project.scene_count);
+    println!(
+        "tempo {} bpm, {} scenes",
+        project.tempo, project.scene_count
+    );
     for t in project.tracks.iter().chain(&project.return_tracks) {
         let notes: usize = t
             .session_clips
